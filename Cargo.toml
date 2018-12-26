@@ -1,0 +1,7 @@
+[package]
+name = "queue"
+version = "0.1.0"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+
+[dependencies]
+crossbeam-utils = "*"
