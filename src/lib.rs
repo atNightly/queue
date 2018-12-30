@@ -206,8 +206,6 @@ impl<T> Queue<T> {
         }
     }
 
-    // TODO: use wrapping operations
-
     /// Attempts to reserve a slot for receiving a value.
     pub fn pop(&self) -> Option<T> {
         let mut backoff = Backoff::new();
