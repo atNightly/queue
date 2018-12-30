@@ -148,6 +148,7 @@ impl<T> Queue<T> {
     pub fn push(&self, value: T) {
         let mut backoff = Backoff::new();
         let mut tail = self.tail.index.load(Ordering::Acquire);
+        let mut block = self.tail.block.load(Ordering::Acquire);
         let mut next_block = None;
 
         loop {
@@ -158,10 +159,9 @@ impl<T> Queue<T> {
             if offset == BLOCK_CAP {
                 backoff.snooze();
                 tail = self.tail.index.load(Ordering::Acquire);
+                block = self.tail.block.load(Ordering::Acquire);
                 continue;
             }
-
-            let block = self.tail.block.load(Ordering::Acquire);
 
             // If we're going to have to install the next block, allocate it in advance in order to
             // make the wait for other threads as short as possible.
@@ -200,6 +200,7 @@ impl<T> Queue<T> {
                 }
                 Err(t) => {
                     tail = t;
+                    block = self.tail.block.load(Ordering::Acquire);
                     backoff.spin();
                 }
             }
@@ -210,6 +211,7 @@ impl<T> Queue<T> {
     pub fn pop(&self) -> Option<T> {
         let mut backoff = Backoff::new();
         let mut head = self.head.index.load(Ordering::Acquire);
+        let mut block = self.head.block.load(Ordering::Acquire);
 
         loop {
             // Calculate the offset of the index into the block.
@@ -219,6 +221,7 @@ impl<T> Queue<T> {
             if offset == BLOCK_CAP {
                 backoff.snooze();
                 head = self.head.index.load(Ordering::Acquire);
+                block = self.head.block.load(Ordering::Acquire);
                 continue;
             }
 
@@ -238,8 +241,6 @@ impl<T> Queue<T> {
                     new_head |= HAS_NEXT;
                 }
             }
-
-            let block = self.head.block.load(Ordering::Acquire);
 
             // Try moving the head index forward.
             match self.head.index
@@ -280,8 +281,9 @@ impl<T> Queue<T> {
                     return Some(value);
                 }
                 Err(h) => {
-                    backoff.spin();
                     head = h;
+                    block = self.head.block.load(Ordering::Acquire);
+                    backoff.spin();
                 }
             }
         }
