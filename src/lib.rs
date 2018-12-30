@@ -3,6 +3,7 @@ extern crate crossbeam_utils;
 use std::cell::UnsafeCell;
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
+use std::ptr;
 use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use std::thread;
 
@@ -129,15 +130,13 @@ unsafe impl<T: Send> Sync for Queue<T> {}
 impl<T> Queue<T> {
     /// Creates a new unbounded queue.
     pub fn new() -> Self {
-        let block = Box::into_raw(Box::new(Block::<T>::new()));
-
         Queue {
             head: CachePadded::new(Position {
-                block: AtomicPtr::new(block),
+                block: AtomicPtr::new(ptr::null_mut()),
                 index: AtomicUsize::new(0),
             }),
             tail: CachePadded::new(Position {
-                block: AtomicPtr::new(block),
+                block: AtomicPtr::new(ptr::null_mut()),
                 index: AtomicUsize::new(0),
             }),
             _marker: PhantomData,
@@ -167,6 +166,21 @@ impl<T> Queue<T> {
             // make the wait for other threads as short as possible.
             if offset + 1 == BLOCK_CAP && next_block.is_none() {
                 next_block = Some(Box::new(Block::<T>::new()));
+            }
+
+            // If this is the first push operation, we need to allocate the first block.
+            if block.is_null() {
+                let new = Box::into_raw(Box::new(Block::<T>::new()));
+
+                if self.tail.block.compare_and_swap(block, new, Ordering::Release) == block {
+                    self.head.block.store(new, Ordering::Release);
+                    block = new;
+                } else {
+                    next_block = unsafe { Some(Box::from_raw(new)) };
+                    tail = self.tail.index.load(Ordering::Acquire);
+                    block = self.tail.block.load(Ordering::Acquire);
+                    continue;
+                }
             }
 
             let new_tail = tail + (1 << SHIFT);
@@ -240,6 +254,15 @@ impl<T> Queue<T> {
                 if (head >> SHIFT) / LAP != (tail >> SHIFT) / LAP {
                     new_head |= HAS_NEXT;
                 }
+            }
+
+            // The block can be null here only if the first push operation is in progress. In that
+            // case, just wait until it gets initialized.
+            if block.is_null() {
+                backoff.snooze();
+                head = self.head.index.load(Ordering::Acquire);
+                block = self.head.block.load(Ordering::Acquire);
+                continue;
             }
 
             // Try moving the head index forward.
@@ -327,7 +350,9 @@ impl<T> Drop for Queue<T> {
             }
 
             // Deallocate the last remaining block.
-            drop(Box::from_raw(block));
+            if !block.is_null() {
+                drop(Box::from_raw(block));
+            }
         }
     }
 }
