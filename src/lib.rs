@@ -143,7 +143,7 @@ impl<T> Queue<T> {
         }
     }
 
-    /// Attempts to reserve a slot for sending a value.
+    /// Pushes a value into the queue.
     pub fn push(&self, value: T) {
         let mut backoff = Backoff::new();
         let mut tail = self.tail.index.load(Ordering::Acquire);
@@ -221,7 +221,7 @@ impl<T> Queue<T> {
         }
     }
 
-    /// Attempts to reserve a slot for receiving a value.
+    /// Pops a value from the queue.
     pub fn pop(&self) -> Option<T> {
         let mut backoff = Backoff::new();
         let mut head = self.head.index.load(Ordering::Acquire);
